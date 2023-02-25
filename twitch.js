@@ -6,6 +6,15 @@ const url = require('url');
 const open = require('open');
 require('dotenv').config();
 
+let socket, websocketid, closeheaders
+let first = true
+
+process.on('SIGINT', () => {
+  console.log('Deleting Subscription')
+  open(`https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${twitchClientId}&redirect_uri=http://localhost:3000&scope=moderator%3Aread%3Afollowers&state=c3ab8aa609ea11e793ae92361f002671&nonce=c3ab8aa609ea11e793ae92361f002671`)
+});
+
+
 // Application Secrets
 const twitchClientId = process.env.twitchClientId;
 const twitchClientSecret = process.env.twitchClientSecret;
@@ -22,10 +31,11 @@ const server = http.createServer((req, res) => {
   if (code == undefined || scope == undefined || state == undefined) {
     return
   }
-  console.log('  Code:', code);
-  console.log('  Scope:', scope);
-  console.log('  State:', state);
-
+  if (first) {
+    console.log('  Code:', code);
+    console.log('  Scope:', scope);
+    console.log('  State:', state);
+  }
   // Call twitch api using code from OAuth url to get account token
   axios.post('https://id.twitch.tv/oauth2/token', {
     client_id: twitchClientId,
@@ -34,25 +44,28 @@ const server = http.createServer((req, res) => {
     grant_type: 'authorization_code',
     redirect_uri: 'http://localhost:3000'
   }).then(response => {
-    console.log('  Access Token:', response.data.access_token);
-    console.log('  Refresh Token:', response.data.refresh_token);
-    console.log('  Scopes:', response.data.scope);
+    if (first) {
+      console.log('  Access Token:', response.data.access_token);
+      console.log('  Refresh Token:', response.data.refresh_token);
+      console.log('  Scopes:', response.data.scope);
+    }
 
     // connect to webentsub websocket
     // see https://dev.twitch.tv/docs/assets/uploads/websocket-message-flow.png  
-    const socket = new WebSocket('wss://eventsub-beta.wss.twitch.tv/ws');
+    socket = new WebSocket('wss://eventsub-beta.wss.twitch.tv/ws');
     // listener for events on websocket
     socket.addEventListener('message', async function (event) {
       event = JSON.parse(event.data)
       // first message is labeled as <session_welcome>
       if (event.metadata.message_type == 'session_welcome') {
-        console.log('  Session ID:', event.payload.session.id);
-        console.log('+=====================================================================================+');
-       // headers needed to let eventsub websocket know you are listening
+        if (first) {
+          console.log('  Session ID:', event.payload.session.id);
+          console.log('+=====================================================================================+');
+        }
+        // headers needed to let eventsub websocket know you are listening
         const headers = {
           "Client-Id": twitchClientId,
           "Authorization": `Bearer ${response.data.access_token}`,
-          'Content-Type': 'application/json',
         }
         // body to request scopes and specify transport type
         const body = {
@@ -67,11 +80,26 @@ const server = http.createServer((req, res) => {
             "session_id": event.payload.session.id,
           },
         }
-        // respond to eventsub websocket so it stays open
-        axios.post('https://api.twitch.tv/helix/eventsub/subscriptions', body, { headers })
-        .then(response => {
-          console.log(response.data);
-        })
+
+        if (!first) {
+          axios.delete(`https://api.twitch.tv/helix/eventsub/subscriptions?id=${websocketid}`, { headers }).then(response => {
+            console.log('\nSubscription deleted', response.data);
+            process.exit(0);
+          }).catch(error => {
+            console.error('Error deleting subscription:', error.response.data);
+            process.exit(0);
+          });
+        } else {
+          // respond to eventsub websocket so it stays open
+          axios.post('https://api.twitch.tv/helix/eventsub/subscriptions', body, { headers }).then(response => {
+            console.log(response.data)
+            console.log('+=====================================================================================+');
+            console.log('  Subscription Created with ID:', response.data.data[0].id);
+            console.log('+=====================================================================================+');
+            websocketid = response.data.data[0].id
+            first = false
+          })
+        }        
       } else {
         // log events that are not welcome events
         console.log("Event:\n", event)
