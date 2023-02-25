@@ -3,3 +3,6 @@
 
 # Ignore the node_modules folder
 node_modules/
+
+# Ignore .png file
+.png
