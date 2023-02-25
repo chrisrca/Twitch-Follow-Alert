@@ -1,8 +1,4 @@
-# Ignore .env file
 .env
-
-# Ignore the node_modules folder
-node_modules/
-
-# Ignore .png file
 .png
+.mp4
+node_modules/
